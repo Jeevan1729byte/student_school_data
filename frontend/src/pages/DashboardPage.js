@@ -59,7 +59,8 @@ const DashboardPage = () => {
 
   const currentStudent = refreshedStudent || student;
   const isRegistrationComplete = currentStudent?.payment_status === "paid";
-  const hasTshirtSize = !!currentStudent?.tshirt_size || !!selectedSize;
+  // Button enabled only when selectedSize has a value (user has selected or had saved size)
+  const hasTshirtSize = !!selectedSize;
 
   const handleSizeChange = async (size) => {
     setSelectedSize(size);
