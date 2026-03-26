@@ -1,0 +1,94 @@
+{
+  "theme": "Light",
+  "archetype": "4 (Swiss & High-Contrast / Modern SaaS)",
+  "colors": {
+    "background": {
+      "primary": "#FFFFFF",
+      "secondary": "#F8FAFC",
+      "tertiary": "#F1F5F9"
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#475569",
+      "tertiary": "#94A3B8"
+    },
+    "accent": {
+      "primary": "#2563EB",
+      "hover": "#1D4ED8",
+      "focus_ring": "#BFDBFE"
+    },
+    "success": {
+      "primary": "#10B981",
+      "background": "#ECFDF5",
+      "text": "#065F46"
+    },
+    "border": {
+      "default": "#E2E8F0",
+      "focus": "#3B82F6"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "headings": "'Barlow Condensed', sans-serif",
+      "body": "'IBM Plex Sans', sans-serif",
+      "data": "'JetBrains Mono', monospace"
+    },
+    "sizing": {
+      "h1": "text-4xl sm:text-5xl tracking-tighter",
+      "h2": "text-2xl sm:text-3xl tracking-tight",
+      "h3": "text-xl sm:text-2xl tracking-tight",
+      "body": "text-base leading-relaxed",
+      "data": "text-sm tracking-tight",
+      "labels": "text-xs uppercase tracking-[0.1em]"
+    }
+  },
+  "spacing_and_layout": {
+    "global_spacing": "Tight padding (p-3) and gaps (gap-3) for operational data efficiency, combined with generous outer margins for breathing room.",
+    "container": "max-w-5xl mx-auto px-4 sm:px-6 lg:px-8",
+    "cards": "Rounded-xl with subtle inner padding (p-4 to p-6 depending on context) to maintain the clean form-focused UI.",
+    "grid_strategy": "Control Room Grid for Admin (Dense, data correlation), Bento Grid for Student Dashboard."
+  },
+  "surface_styles": {
+    "cards": "bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200",
+    "inputs": "bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all",
+    "buttons": "rounded-lg font-medium px-4 py-2 transition-all active:scale-95",
+    "button_primary": "bg-blue-600 text-white hover:bg-blue-700 shadow-sm",
+    "button_success": "bg-green-500 text-white hover:bg-green-600 shadow-sm"
+  },
+  "components": {
+    "login_form": "Minimalist center-aligned card over an abstract light architecture background. Clean input fields with blue focus glow.",
+    "student_dashboard": "Two-column bento layout. Left: Read-only auto-filled student data (JetBrains Mono for data). Right: Actionable form for T-Shirt Size (Shadcn Select) and Payment Summary.",
+    "payment_summary": "Invoice-style receipt card. Slate borders, clear line items. Green 'Pay Now' CTA.",
+    "success_screen": "Generous whitespace. Large green success icon. JetBrains Mono for Payment ID. Monochromatic subtle confetti or Framer Motion scale-in effect.",
+    "admin_dashboard": "Dense data table. Use IBM Plex Sans for headers and JetBrains Mono for row data. Action-paired insights at the top (e.g., '15 Pending Payments')."
+  },
+  "animations": {
+    "transitions": "Smooth transitions with Framer Motion. Use 'layout' prop for smooth height adjustments on forms.",
+    "page_load": "Fade-in and slide-up (y: 20 -> 0, opacity: 0 -> 1, duration: 0.4s).",
+    "interactive": "Hover lifts (-translate-y-0.5) on cards. Active scale-down on buttons (scale: 0.98)."
+  },
+  "image_urls": {
+    "login_background": {
+      "url": "https://images.unsplash.com/photo-1591271003322-97ac0759907e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzZ8MHwxfHNlYXJjaHwzfHxhYnN0cmFjdCUyMHdoaXRlJTIwYXJjaGl0ZWN0dXJlfGVufDB8fHx8MTc3NDU1OTczOHww&ixlib=rb-4.1.0&q=85",
+      "description": "Minimalist abstract white architectural ceiling/wall to serve as a clean, non-distracting background for the login page."
+    },
+    "admin_empty_state": {
+      "url": "https://images.pexels.com/photos/1597623/pexels-photo-1597623.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Abstract spiral architecture for empty states or decorative side-panels in the admin dashboard."
+    }
+  },
+  "icons": {
+    "library": "lucide-react",
+    "instructions": "Use Lucide React for crisp, clean, SaaS-style icons. Keep stroke-width to 1.5 or 2 depending on weight."
+  },
+  "instructions_to_main_agent": [
+    "Strictly adhere to the selected fonts: Barlow Condensed (Headings), IBM Plex Sans (Body), JetBrains Mono (Data/Numbers/IDs).",
+    "All form inputs must use the specified focus states (ring-blue-100, border-blue-500) to create a subtle 'blue glow'.",
+    "Implement tight spacing (p-3, gap-3) within functional components (forms, tables) to maintain an operational SaaS feel.",
+    "Use 'rounded-xl' for main cards and 'rounded-lg' for internal inputs and buttons.",
+    "Ensure all interactive elements have a 'data-testid' attribute (e.g., 'login-submit-button', 'tshirt-size-dropdown').",
+    "Do NOT use raw HTML <select> or <input type='date'>. Use Shadcn UI components and customize them with the provided surface styles.",
+    "The Payment Success screen should prominently feature the Payment ID using JetBrains Mono in a copyable field.",
+    "Admin dashboard must prioritize data readability—use JetBrains Mono for tabular data."
+  ]
+}
