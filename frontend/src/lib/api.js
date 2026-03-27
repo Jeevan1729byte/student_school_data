@@ -25,11 +25,18 @@ export const getStudent = async (studentId) => {
   return response.data;
 };
 
-export const updateTshirtSize = async (studentId, size) => {
+export const updateTshirtSize = async (studentId, size, extraTshirts = 0, extraTshirtSize = null) => {
   const response = await apiClient.post("/student/update-tshirt", {
     student_id: studentId,
     tshirt_size: size,
+    extra_tshirts: extraTshirts,
+    extra_tshirt_size: extraTshirtSize,
   });
+  return response.data;
+};
+
+export const getPricing = async () => {
+  const response = await apiClient.get("/pricing");
   return response.data;
 };
 

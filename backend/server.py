@@ -32,6 +32,7 @@ db = client[os.environ['DB_NAME']]
 # Stripe Configuration
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', 'sk_test_emergent')
 REGISTRATION_FEE = 50.00  # Fixed registration fee
+EXTRA_TSHIRT_PRICE = 15.00  # Price per extra t-shirt
 
 # Resend Configuration
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
@@ -72,6 +73,8 @@ class Student(BaseModel):
     gpa: float
     graduation_year: int
     tshirt_size: Optional[str] = None
+    extra_tshirts: Optional[int] = 0
+    extra_tshirt_size: Optional[str] = None
     payment_id: Optional[str] = None
     payment_status: Optional[str] = None
     registered_at: Optional[str] = None
@@ -79,6 +82,8 @@ class Student(BaseModel):
 class UpdateTshirtRequest(BaseModel):
     student_id: str
     tshirt_size: str
+    extra_tshirts: Optional[int] = 0
+    extra_tshirt_size: Optional[str] = None
 
 class PaymentTransaction(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -86,6 +91,8 @@ class PaymentTransaction(BaseModel):
     student_id: str
     email: str
     amount: float
+    extra_tshirts: int = 0
+    extra_tshirt_amount: float = 0.0
     currency: str = "usd"
     session_id: str
     payment_id: Optional[str] = None
@@ -130,6 +137,8 @@ async def load_csv_to_mongodb():
                 "gpa": float(row['GPA']),
                 "graduation_year": int(row['GraduationYear']),
                 "tshirt_size": None,
+                "extra_tshirts": 0,
+                "extra_tshirt_size": None,
                 "payment_id": None,
                 "payment_status": None,
                 "registered_at": None
@@ -171,6 +180,10 @@ async def send_confirmation_email(student: dict, payment_id: str):
                     <tr>
                         <td style="padding: 8px 0; color: #64748b;">T-Shirt Size:</td>
                         <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">{student.get('tshirt_size', 'N/A')}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px 0; color: #64748b;">Extra T-Shirts:</td>
+                        <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">{student.get('extra_tshirts', 0)} pcs</td>
                     </tr>
                     <tr>
                         <td style="padding: 8px 0; color: #64748b;">Payment ID:</td>
@@ -244,22 +257,45 @@ async def get_student(student_id: str):
     
     return Student(**student)
 
+
+@api_router.get("/pricing")
+async def get_pricing():
+    """Get current pricing information"""
+    return {
+        "registration_fee": REGISTRATION_FEE,
+        "extra_tshirt_price": EXTRA_TSHIRT_PRICE,
+        "currency": "usd"
+    }
+
+
 @api_router.post("/student/update-tshirt")
 async def update_tshirt_size(request: UpdateTshirtRequest):
-    """Update student's T-shirt size"""
+    """Update student's T-shirt size and extra t-shirts"""
     valid_sizes = ["S", "M", "L", "XL", "XXL"]
     if request.tshirt_size not in valid_sizes:
         raise HTTPException(status_code=400, detail=f"Invalid size. Choose from: {valid_sizes}")
     
+    if request.extra_tshirt_size and request.extra_tshirt_size not in valid_sizes:
+        raise HTTPException(status_code=400, detail=f"Invalid extra t-shirt size. Choose from: {valid_sizes}")
+    
+    if request.extra_tshirts and request.extra_tshirts < 0:
+        raise HTTPException(status_code=400, detail="Extra t-shirts cannot be negative")
+    
+    update_data = {
+        "tshirt_size": request.tshirt_size,
+        "extra_tshirts": request.extra_tshirts or 0,
+        "extra_tshirt_size": request.extra_tshirt_size if request.extra_tshirts else None
+    }
+    
     result = await db.students.update_one(
         {"student_id": request.student_id},
-        {"$set": {"tshirt_size": request.tshirt_size}}
+        {"$set": update_data}
     )
     
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Student not found")
     
-    return {"success": True, "message": "T-shirt size updated"}
+    return {"success": True, "message": "T-shirt preferences updated"}
 
 # ============ PAYMENT ENDPOINTS ============
 
@@ -281,6 +317,11 @@ async def create_checkout_session(request: CreateCheckoutRequest, http_request: 
     if student.get('payment_status') == 'paid':
         raise HTTPException(status_code=400, detail="Registration already completed")
     
+    # Calculate total amount
+    extra_tshirts = student.get('extra_tshirts', 0)
+    extra_tshirt_amount = extra_tshirts * EXTRA_TSHIRT_PRICE
+    total_amount = REGISTRATION_FEE + extra_tshirt_amount
+    
     # Build URLs
     origin_url = request.origin_url.rstrip('/')
     success_url = f"{origin_url}/payment-success?session_id={{CHECKOUT_SESSION_ID}}"
@@ -293,14 +334,15 @@ async def create_checkout_session(request: CreateCheckoutRequest, http_request: 
     
     # Create checkout session
     checkout_request = CheckoutSessionRequest(
-        amount=REGISTRATION_FEE,
+        amount=total_amount,
         currency="usd",
         success_url=success_url,
         cancel_url=cancel_url,
         metadata={
             "student_id": request.student_id,
             "email": student['email'],
-            "name": student['name']
+            "name": student['name'],
+            "extra_tshirts": str(extra_tshirts)
         }
     )
     
@@ -310,7 +352,9 @@ async def create_checkout_session(request: CreateCheckoutRequest, http_request: 
     transaction = PaymentTransaction(
         student_id=request.student_id,
         email=student['email'],
-        amount=REGISTRATION_FEE,
+        amount=total_amount,
+        extra_tshirts=extra_tshirts,
+        extra_tshirt_amount=extra_tshirt_amount,
         currency="usd",
         session_id=session.session_id,
         payment_status="pending"
@@ -320,7 +364,8 @@ async def create_checkout_session(request: CreateCheckoutRequest, http_request: 
     
     return {
         "checkout_url": session.url,
-        "session_id": session.session_id
+        "session_id": session.session_id,
+        "total_amount": total_amount
     }
 
 @api_router.get("/payment/status/{session_id}")
@@ -499,6 +544,8 @@ async def export_csv():
         'gpa': 'GPA',
         'graduation_year': 'GraduationYear',
         'tshirt_size': 'TShirtSize',
+        'extra_tshirts': 'ExtraTShirts',
+        'extra_tshirt_size': 'ExtraTShirtSize',
         'payment_id': 'PaymentID',
         'payment_status': 'PaymentStatus',
         'registered_at': 'RegisteredAt'
@@ -508,7 +555,8 @@ async def export_csv():
     
     # Order columns
     columns_order = ['StudentID', 'Name', 'Age', 'Email', 'Department', 'GPA', 
-                     'GraduationYear', 'TShirtSize', 'PaymentID', 'PaymentStatus', 'RegisteredAt']
+                     'GraduationYear', 'TShirtSize', 'ExtraTShirts', 'ExtraTShirtSize',
+                     'PaymentID', 'PaymentStatus', 'RegisteredAt']
     df = df.reindex(columns=[c for c in columns_order if c in df.columns])
     
     csv_content = df.to_csv(index=False)

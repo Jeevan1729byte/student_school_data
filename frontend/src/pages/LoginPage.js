@@ -10,6 +10,8 @@ import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { loginStudent, getStudent } from "@/lib/api";
 
+const TAISM_LOGO = "https://customer-assets.emergentagent.com/job_student-intake-11/artifacts/1c9m9kkk_image.png";
+
 const LoginPage = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
@@ -59,9 +61,12 @@ const LoginPage = () => {
         <Card className="border-slate-200 shadow-xl">
           <CardHeader className="space-y-1 pb-4">
             <div className="flex items-center justify-center mb-4">
-              <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center">
-                <Shield className="w-6 h-6 text-white" />
-              </div>
+              <img 
+                src={TAISM_LOGO} 
+                alt="TAISM Logo" 
+                className="h-20 w-auto"
+                data-testid="taism-logo"
+              />
             </div>
             <CardTitle className="text-2xl sm:text-3xl font-headings tracking-tight text-center text-slate-900">
               Student Registration

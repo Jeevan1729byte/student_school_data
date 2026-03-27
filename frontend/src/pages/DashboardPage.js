@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { 
   User, Mail, GraduationCap, BookOpen, Award, Calendar, 
-  Shirt, CreditCard, LogOut, Loader2, CheckCircle, AlertCircle
+  Shirt, CreditCard, LogOut, Loader2, CheckCircle, AlertCircle, Plus, Minus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +17,8 @@ import { getStudent, updateTshirtSize, createCheckoutSession } from "@/lib/api";
 
 const TSHIRT_SIZES = ["S", "M", "L", "XL", "XXL"];
 const REGISTRATION_FEE = 50.00;
+const EXTRA_TSHIRT_PRICE = 15.00;
+const TAISM_LOGO = "https://customer-assets.emergentagent.com/job_student-intake-11/artifacts/1c9m9kkk_image.png";
 
 const InfoCard = ({ icon: Icon, label, value, mono = false }) => (
   <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
@@ -36,6 +38,8 @@ const DashboardPage = () => {
   const navigate = useNavigate();
   const { student, logout, updateStudent } = useAuth();
   const [selectedSize, setSelectedSize] = useState(student?.tshirt_size || "");
+  const [extraTshirts, setExtraTshirts] = useState(student?.extra_tshirts || 0);
+  const [extraTshirtSize, setExtraTshirtSize] = useState(student?.extra_tshirt_size || "");
   const [isSavingSize, setIsSavingSize] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [refreshedStudent, setRefreshedStudent] = useState(null);
@@ -49,6 +53,8 @@ const DashboardPage = () => {
           setRefreshedStudent(data);
           updateStudent(data);
           setSelectedSize(data.tshirt_size || "");
+          setExtraTshirts(data.extra_tshirts || 0);
+          setExtraTshirtSize(data.extra_tshirt_size || "");
         } catch (error) {
           console.error("Failed to refresh student data:", error);
         }
@@ -59,15 +65,18 @@ const DashboardPage = () => {
 
   const currentStudent = refreshedStudent || student;
   const isRegistrationComplete = currentStudent?.payment_status === "paid";
-  // Button enabled only when selectedSize has a value (user has selected or had saved size)
   const hasTshirtSize = !!selectedSize;
+  
+  // Calculate total
+  const extraTshirtTotal = extraTshirts * EXTRA_TSHIRT_PRICE;
+  const totalAmount = REGISTRATION_FEE + extraTshirtTotal;
 
   const handleSizeChange = async (size) => {
     setSelectedSize(size);
     setIsSavingSize(true);
 
     try {
-      await updateTshirtSize(currentStudent.student_id, size);
+      await updateTshirtSize(currentStudent.student_id, size, extraTshirts, extraTshirtSize);
       updateStudent({ tshirt_size: size });
       toast.success("T-shirt size saved!");
     } catch (error) {
@@ -78,9 +87,56 @@ const DashboardPage = () => {
     }
   };
 
+  const handleExtraTshirtsChange = async (delta) => {
+    const newCount = Math.max(0, Math.min(10, extraTshirts + delta));
+    setExtraTshirts(newCount);
+    
+    if (selectedSize) {
+      setIsSavingSize(true);
+      try {
+        await updateTshirtSize(
+          currentStudent.student_id, 
+          selectedSize, 
+          newCount, 
+          newCount > 0 ? (extraTshirtSize || selectedSize) : null
+        );
+        updateStudent({ extra_tshirts: newCount });
+        toast.success("Extra t-shirts updated!");
+      } catch (error) {
+        toast.error("Failed to update. Please try again.");
+        setExtraTshirts(currentStudent?.extra_tshirts || 0);
+      } finally {
+        setIsSavingSize(false);
+      }
+    }
+  };
+
+  const handleExtraTshirtSizeChange = async (size) => {
+    setExtraTshirtSize(size);
+    
+    if (selectedSize && extraTshirts > 0) {
+      setIsSavingSize(true);
+      try {
+        await updateTshirtSize(currentStudent.student_id, selectedSize, extraTshirts, size);
+        updateStudent({ extra_tshirt_size: size });
+        toast.success("Extra t-shirt size saved!");
+      } catch (error) {
+        toast.error("Failed to save size. Please try again.");
+        setExtraTshirtSize(currentStudent?.extra_tshirt_size || "");
+      } finally {
+        setIsSavingSize(false);
+      }
+    }
+  };
+
   const handlePayment = async () => {
     if (!selectedSize) {
       toast.error("Please select your T-shirt size first");
+      return;
+    }
+
+    if (extraTshirts > 0 && !extraTshirtSize) {
+      toast.error("Please select a size for extra T-shirts");
       return;
     }
 
@@ -90,7 +146,6 @@ const DashboardPage = () => {
       const response = await createCheckoutSession(currentStudent.student_id);
       
       if (response.checkout_url) {
-        // Redirect to Stripe checkout
         window.location.href = response.checkout_url;
       }
     } catch (error) {
@@ -119,9 +174,11 @@ const DashboardPage = () => {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center">
-              <GraduationCap className="w-5 h-5 text-white" />
-            </div>
+            <img 
+              src={TAISM_LOGO} 
+              alt="TAISM Logo" 
+              className="h-10 w-auto"
+            />
             <span className="font-headings text-xl font-semibold text-slate-900">
               Student Portal
             </span>
@@ -211,7 +268,7 @@ const DashboardPage = () => {
                 <div className="space-y-2">
                   <Label className="text-sm font-medium text-slate-700">
                     <Shirt className="w-4 h-4 inline mr-2" />
-                    T-Shirt Size
+                    T-Shirt Size (Included)
                   </Label>
                   {isRegistrationComplete ? (
                     <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg">
@@ -248,16 +305,110 @@ const DashboardPage = () => {
                   )}
                 </div>
 
+                {/* Extra T-Shirts Section */}
+                {!isRegistrationComplete && (
+                  <div className="space-y-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                    <Label className="text-sm font-medium text-slate-700">
+                      <Plus className="w-4 h-4 inline mr-2" />
+                      Extra T-Shirts (${EXTRA_TSHIRT_PRICE.toFixed(2)} each)
+                    </Label>
+                    
+                    <div className="flex items-center gap-3">
+                      <Button
+                        data-testid="decrease-extra-tshirts"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => handleExtraTshirtsChange(-1)}
+                        disabled={extraTshirts === 0 || isSavingSize || !selectedSize}
+                        className="h-9 w-9"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </Button>
+                      <span className="font-data text-lg font-semibold w-8 text-center" data-testid="extra-tshirts-count">
+                        {extraTshirts}
+                      </span>
+                      <Button
+                        data-testid="increase-extra-tshirts"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => handleExtraTshirtsChange(1)}
+                        disabled={extraTshirts >= 10 || isSavingSize || !selectedSize}
+                        className="h-9 w-9"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </Button>
+                    </div>
+
+                    {extraTshirts > 0 && (
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-600">Size for extra T-shirts</Label>
+                        <Select
+                          value={extraTshirtSize}
+                          onValueChange={handleExtraTshirtSizeChange}
+                          disabled={isSavingSize}
+                        >
+                          <SelectTrigger 
+                            data-testid="extra-tshirt-size-dropdown"
+                            className="w-full h-10 bg-white border-slate-300"
+                          >
+                            <SelectValue placeholder="Select size" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {TSHIRT_SIZES.map((size) => (
+                              <SelectItem key={size} value={size}>
+                                {size}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {isRegistrationComplete && currentStudent.extra_tshirts > 0 && (
+                  <div className="p-3 bg-slate-50 rounded-lg">
+                    <p className="text-sm text-slate-600">
+                      Extra T-Shirts: <span className="font-data font-semibold">{currentStudent.extra_tshirts}</span>
+                      {currentStudent.extra_tshirt_size && (
+                        <Badge variant="secondary" className="ml-2 font-data">
+                          {currentStudent.extra_tshirt_size}
+                        </Badge>
+                      )}
+                    </p>
+                  </div>
+                )}
+
                 <Separator />
 
                 {/* Payment Summary */}
                 <div className="space-y-3">
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-slate-600">Registration Fee</span>
-                    <span className="font-data font-semibold text-slate-900">
+                    <span className="font-data font-medium text-slate-900">
                       ${REGISTRATION_FEE.toFixed(2)}
                     </span>
                   </div>
+                  
+                  {extraTshirts > 0 && !isRegistrationComplete && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600">
+                        Extra T-Shirts ({extraTshirts} × ${EXTRA_TSHIRT_PRICE.toFixed(2)})
+                      </span>
+                      <span className="font-data font-medium text-slate-900">
+                        ${extraTshirtTotal.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+
+                  {!isRegistrationComplete && (
+                    <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                      <span className="text-sm font-semibold text-slate-900">Total</span>
+                      <span className="font-data text-lg font-bold text-blue-600" data-testid="total-amount">
+                        ${totalAmount.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
 
                   {isRegistrationComplete ? (
                     <div className="p-3 bg-emerald-50 rounded-lg">
@@ -273,7 +424,7 @@ const DashboardPage = () => {
                     <Button
                       data-testid="proceed-to-payment-button"
                       onClick={handlePayment}
-                      disabled={!hasTshirtSize || isProcessingPayment || isSavingSize}
+                      disabled={!hasTshirtSize || isProcessingPayment || isSavingSize || (extraTshirts > 0 && !extraTshirtSize)}
                       className="w-full h-11 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-lg transition-all active:scale-[0.98]"
                     >
                       {isProcessingPayment ? (
@@ -284,7 +435,7 @@ const DashboardPage = () => {
                       ) : (
                         <>
                           <CreditCard className="w-4 h-4 mr-2" />
-                          Proceed to Payment
+                          Pay ${totalAmount.toFixed(2)}
                         </>
                       )}
                     </Button>

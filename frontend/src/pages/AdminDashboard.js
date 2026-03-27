@@ -13,6 +13,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "sonner";
 import { getAdminStats, getAllStudents, exportCSV } from "@/lib/api";
 
+const TAISM_LOGO = "https://customer-assets.emergentagent.com/job_student-intake-11/artifacts/1c9m9kkk_image.png";
+
 const StatCard = ({ icon: Icon, label, value, subtext, color }) => (
   <motion.div
     initial={{ opacity: 0, y: 10 }}
@@ -118,6 +120,11 @@ const AdminDashboard = () => {
             >
               <ArrowLeft className="w-5 h-5" />
             </Button>
+            <img 
+              src={TAISM_LOGO} 
+              alt="TAISM Logo" 
+              className="h-10 w-auto"
+            />
             <span className="font-headings text-xl font-semibold text-slate-900">
               Admin Dashboard
             </span>
@@ -210,6 +217,7 @@ const AdminDashboard = () => {
                     <TableHead className="text-slate-600 hidden sm:table-cell">Email</TableHead>
                     <TableHead className="text-slate-600 hidden md:table-cell">Department</TableHead>
                     <TableHead className="text-slate-600">Size</TableHead>
+                    <TableHead className="text-slate-600">Extra</TableHead>
                     <TableHead className="text-slate-600">Status</TableHead>
                     <TableHead className="text-slate-600 hidden lg:table-cell">Payment ID</TableHead>
                   </TableRow>
@@ -217,7 +225,7 @@ const AdminDashboard = () => {
                 <TableBody>
                   {filteredStudents.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-slate-500">
+                      <TableCell colSpan={8} className="text-center py-8 text-slate-500">
                         No students found
                       </TableCell>
                     </TableRow>
@@ -244,6 +252,15 @@ const AdminDashboard = () => {
                           {student.tshirt_size ? (
                             <Badge variant="secondary" className="font-data">
                               {student.tshirt_size}
+                            </Badge>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {student.extra_tshirts > 0 ? (
+                            <Badge variant="outline" className="font-data text-blue-600 border-blue-200">
+                              +{student.extra_tshirts}
                             </Badge>
                           ) : (
                             <span className="text-slate-400">—</span>
