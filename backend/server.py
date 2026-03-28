@@ -1,18 +1,17 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Request
+from fastapi.responses import Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
-import asyncio
 import certifi
 from pathlib import Path
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
-from typing import List, Optional, Dict
+from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional
 import uuid
 from datetime import datetime, timezone
 import pandas as pd
-import resend
 
 # Stripe Integration
 from emergentintegrations.payments.stripe.checkout import (
@@ -31,16 +30,12 @@ client = AsyncIOMotorClient(mongo_url, tlsCAFile=certifi.where())
 db = client[os.environ['DB_NAME']]
 
 # Stripe Configuration
-STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', 'sk_test_emergent')
-REGISTRATION_FEE = 50.00  # Fixed registration fee
-EXTRA_TSHIRT_PRICE = 15.00  # Price per extra t-shirt
-
-# Resend Configuration
-resend.api_key = os.environ.get('RESEND_API_KEY', '')
-SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY')
+REGISTRATION_FEE = 50.00
+EXTRA_TSHIRT_PRICE = 15.00
 
 # Create the main app
-app = FastAPI(title="Student Registration System")
+app = FastAPI(title="TAISM Student Registration")
 
 # Create router with /api prefix
 api_router = APIRouter(prefix="/api")
@@ -111,11 +106,6 @@ class AdminStats(BaseModel):
     pending_registrations: int
     total_revenue: float
 
-class EmailRequest(BaseModel):
-    recipient_email: EmailStr
-    subject: str
-    html_content: str
-
 # ============ UTILITY FUNCTIONS ============
 
 async def load_csv_to_mongodb():
@@ -145,7 +135,6 @@ async def load_csv_to_mongodb():
                 "registered_at": None
             }
             
-            # Upsert - update if exists, insert if not
             await db.students.update_one(
                 {"student_id": student_data["student_id"]},
                 {"$setOnInsert": student_data},
@@ -156,75 +145,11 @@ async def load_csv_to_mongodb():
     except Exception as e:
         logger.error(f"Error loading CSV: {e}")
 
-async def send_confirmation_email(student: dict, payment_id: str):
-    """Send payment confirmation email"""
-    if not resend.api_key:
-        logger.warning("Resend API key not configured, skipping email")
-        return
-    
-    html_content = f"""
-    <html>
-    <body style="font-family: 'IBM Plex Sans', Arial, sans-serif; background-color: #f8fafc; padding: 40px;">
-        <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; padding: 40px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-            <h1 style="font-family: 'Barlow Condensed', sans-serif; color: #0f172a; margin-bottom: 24px;">Registration Confirmed!</h1>
-            
-            <p style="color: #475569; line-height: 1.6;">Dear {student['name']},</p>
-            
-            <p style="color: #475569; line-height: 1.6;">Your registration has been successfully completed. Here are your details:</p>
-            
-            <div style="background: #f1f5f9; padding: 20px; border-radius: 8px; margin: 24px 0;">
-                <table style="width: 100%; font-family: 'JetBrains Mono', monospace; font-size: 14px;">
-                    <tr>
-                        <td style="padding: 8px 0; color: #64748b;">Student ID:</td>
-                        <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">{student['student_id']}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0; color: #64748b;">T-Shirt Size:</td>
-                        <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">{student.get('tshirt_size', 'N/A')}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0; color: #64748b;">Extra T-Shirts:</td>
-                        <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">{student.get('extra_tshirts', 0)} pcs</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0; color: #64748b;">Payment ID:</td>
-                        <td style="padding: 8px 0; color: #0f172a; font-weight: 600;">{payment_id}</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px 0; color: #64748b;">Amount Paid:</td>
-                        <td style="padding: 8px 0; color: #10b981; font-weight: 600;">$50.00</td>
-                    </tr>
-                </table>
-            </div>
-            
-            <p style="color: #475569; line-height: 1.6;">Thank you for completing your registration!</p>
-            
-            <div style="border-top: 1px solid #e2e8f0; margin-top: 32px; padding-top: 24px;">
-                <p style="color: #94a3b8; font-size: 12px; margin: 0;">This is an automated confirmation email.</p>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-    
-    params = {
-        "from": SENDER_EMAIL,
-        "to": [student['email']],
-        "subject": "Registration Confirmed - Payment Successful",
-        "html": html_content
-    }
-    
-    try:
-        await asyncio.to_thread(resend.Emails.send, params)
-        logger.info(f"Confirmation email sent to {student['email']}")
-    except Exception as e:
-        logger.error(f"Failed to send email: {e}")
-
 # ============ AUTH ENDPOINTS ============
 
 @api_router.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
-    """Validate student credentials from database"""
+    """Validate student credentials"""
     student = await db.students.find_one(
         {"student_id": request.student_id, "email": request.email},
         {"_id": 0}
@@ -233,7 +158,6 @@ async def login(request: LoginRequest):
     if not student:
         raise HTTPException(status_code=401, detail="Invalid Student ID or Email")
     
-    # Generate a simple token (student_id:timestamp)
     token = f"{student['student_id']}:{datetime.now(timezone.utc).isoformat()}"
     
     return LoginResponse(
@@ -258,26 +182,24 @@ async def get_student(student_id: str):
     
     return Student(**student)
 
-
 @api_router.get("/pricing")
 async def get_pricing():
-    """Get current pricing information"""
+    """Get current pricing"""
     return {
         "registration_fee": REGISTRATION_FEE,
         "extra_tshirt_price": EXTRA_TSHIRT_PRICE,
         "currency": "usd"
     }
 
-
 @api_router.post("/student/update-tshirt")
 async def update_tshirt_size(request: UpdateTshirtRequest):
-    """Update student's T-shirt size and extra t-shirts"""
+    """Update student's T-shirt preferences"""
     valid_sizes = ["S", "M", "L", "XL", "XXL"]
     if request.tshirt_size not in valid_sizes:
         raise HTTPException(status_code=400, detail=f"Invalid size. Choose from: {valid_sizes}")
     
     if request.extra_tshirt_size and request.extra_tshirt_size not in valid_sizes:
-        raise HTTPException(status_code=400, detail=f"Invalid extra t-shirt size. Choose from: {valid_sizes}")
+        raise HTTPException(status_code=400, detail=f"Invalid extra t-shirt size")
     
     if request.extra_tshirts and request.extra_tshirts < 0:
         raise HTTPException(status_code=400, detail="Extra t-shirts cannot be negative")
@@ -302,8 +224,7 @@ async def update_tshirt_size(request: UpdateTshirtRequest):
 
 @api_router.post("/payment/create-checkout")
 async def create_checkout_session(request: CreateCheckoutRequest, http_request: Request):
-    """Create Stripe checkout session for student registration"""
-    # Verify student exists and has selected T-shirt size
+    """Create Stripe checkout session"""
     student = await db.students.find_one(
         {"student_id": request.student_id},
         {"_id": 0}
@@ -318,7 +239,7 @@ async def create_checkout_session(request: CreateCheckoutRequest, http_request: 
     if student.get('payment_status') == 'paid':
         raise HTTPException(status_code=400, detail="Registration already completed")
     
-    # Calculate total amount
+    # Calculate total
     extra_tshirts = student.get('extra_tshirts', 0)
     extra_tshirt_amount = extra_tshirts * EXTRA_TSHIRT_PRICE
     total_amount = REGISTRATION_FEE + extra_tshirt_amount
@@ -328,12 +249,11 @@ async def create_checkout_session(request: CreateCheckoutRequest, http_request: 
     success_url = f"{origin_url}/payment-success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{origin_url}/dashboard"
     
-    # Setup Stripe checkout
+    # Setup Stripe
     host_url = str(http_request.base_url)
     webhook_url = f"{host_url}api/webhook/stripe"
     stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
     
-    # Create checkout session
     checkout_request = CheckoutSessionRequest(
         amount=total_amount,
         currency="usd",
@@ -349,14 +269,13 @@ async def create_checkout_session(request: CreateCheckoutRequest, http_request: 
     
     session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(checkout_request)
     
-    # Create payment transaction record
+    # Create transaction record
     transaction = PaymentTransaction(
         student_id=request.student_id,
         email=student['email'],
         amount=total_amount,
         extra_tshirts=extra_tshirts,
         extra_tshirt_amount=extra_tshirt_amount,
-        currency="usd",
         session_id=session.session_id,
         payment_status="pending"
     )
@@ -371,8 +290,7 @@ async def create_checkout_session(request: CreateCheckoutRequest, http_request: 
 
 @api_router.get("/payment/status/{session_id}")
 async def get_payment_status(session_id: str, http_request: Request):
-    """Get payment status and update database if paid"""
-    # Get transaction
+    """Get payment status"""
     transaction = await db.payment_transactions.find_one(
         {"session_id": session_id},
         {"_id": 0}
@@ -381,7 +299,6 @@ async def get_payment_status(session_id: str, http_request: Request):
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
     
-    # If already marked as paid, return immediately
     if transaction.get('payment_status') == 'paid':
         return {
             "status": "complete",
@@ -400,50 +317,21 @@ async def get_payment_status(session_id: str, http_request: Request):
         payment_id = f"PAY-{uuid.uuid4().hex[:12].upper()}"
         now = datetime.now(timezone.utc).isoformat()
         
-        # Update transaction
         await db.payment_transactions.update_one(
             {"session_id": session_id},
-            {"$set": {
-                "payment_status": "paid",
-                "payment_id": payment_id,
-                "updated_at": now
-            }}
+            {"$set": {"payment_status": "paid", "payment_id": payment_id, "updated_at": now}}
         )
         
-        # Update student record
         await db.students.update_one(
             {"student_id": transaction['student_id']},
-            {"$set": {
-                "payment_status": "paid",
-                "payment_id": payment_id,
-                "registered_at": now
-            }}
+            {"$set": {"payment_status": "paid", "payment_id": payment_id, "registered_at": now}}
         )
         
-        # Get updated student for email
-        student = await db.students.find_one(
-            {"student_id": transaction['student_id']},
-            {"_id": 0}
-        )
-        
-        # Send confirmation email (non-blocking)
-        asyncio.create_task(send_confirmation_email(student, payment_id))
-        
-        return {
-            "status": "complete",
-            "payment_status": "paid",
-            "payment_id": payment_id
-        }
+        return {"status": "complete", "payment_status": "paid", "payment_id": payment_id}
     elif checkout_status.status == 'expired':
-        return {
-            "status": "expired",
-            "payment_status": "expired"
-        }
+        return {"status": "expired", "payment_status": "expired"}
     else:
-        return {
-            "status": checkout_status.status,
-            "payment_status": checkout_status.payment_status
-        }
+        return {"status": checkout_status.status, "payment_status": checkout_status.payment_status}
 
 @api_router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
@@ -463,31 +351,16 @@ async def stripe_webhook(request: Request):
             payment_id = f"PAY-{uuid.uuid4().hex[:12].upper()}"
             now = datetime.now(timezone.utc).isoformat()
             
-            # Get transaction
-            transaction = await db.payment_transactions.find_one(
-                {"session_id": session_id},
-                {"_id": 0}
-            )
+            transaction = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
             
             if transaction and transaction.get('payment_status') != 'paid':
-                # Update transaction
                 await db.payment_transactions.update_one(
                     {"session_id": session_id},
-                    {"$set": {
-                        "payment_status": "paid",
-                        "payment_id": payment_id,
-                        "updated_at": now
-                    }}
+                    {"$set": {"payment_status": "paid", "payment_id": payment_id, "updated_at": now}}
                 )
-                
-                # Update student
                 await db.students.update_one(
                     {"student_id": transaction['student_id']},
-                    {"$set": {
-                        "payment_status": "paid",
-                        "payment_id": payment_id,
-                        "registered_at": now
-                    }}
+                    {"$set": {"payment_status": "paid", "payment_id": payment_id, "registered_at": now}}
                 )
         
         return {"status": "success"}
@@ -504,10 +377,8 @@ async def get_admin_stats():
     completed = await db.students.count_documents({"payment_status": "paid"})
     pending = total - completed
     
-    # Calculate total revenue
     paid_transactions = await db.payment_transactions.find(
-        {"payment_status": "paid"},
-        {"_id": 0, "amount": 1}
+        {"payment_status": "paid"}, {"_id": 0, "amount": 1}
     ).to_list(1000)
     
     total_revenue = sum(t.get('amount', 0) for t in paid_transactions)
@@ -521,21 +392,20 @@ async def get_admin_stats():
 
 @api_router.get("/admin/students")
 async def get_all_students():
-    """Get all students for admin view"""
+    """Get all students"""
     students = await db.students.find({}, {"_id": 0}).to_list(1000)
     return students
 
 @api_router.get("/admin/export")
 async def export_csv():
-    """Export updated student data as CSV"""
+    """Export student data as CSV"""
     students = await db.students.find({}, {"_id": 0}).to_list(1000)
     
     if not students:
-        raise HTTPException(status_code=404, detail="No student data found")
+        raise HTTPException(status_code=404, detail="No data found")
     
     df = pd.DataFrame(students)
     
-    # Rename columns to match original CSV format + new fields
     column_mapping = {
         'student_id': 'StudentID',
         'name': 'Name',
@@ -553,16 +423,8 @@ async def export_csv():
     }
     
     df = df.rename(columns=column_mapping)
-    
-    # Order columns
-    columns_order = ['StudentID', 'Name', 'Age', 'Email', 'Department', 'GPA', 
-                     'GraduationYear', 'TShirtSize', 'ExtraTShirts', 'ExtraTShirtSize',
-                     'PaymentID', 'PaymentStatus', 'RegisteredAt']
-    df = df.reindex(columns=[c for c in columns_order if c in df.columns])
-    
     csv_content = df.to_csv(index=False)
     
-    from fastapi.responses import Response
     return Response(
         content=csv_content,
         media_type="text/csv",
@@ -573,7 +435,7 @@ async def export_csv():
 
 @api_router.get("/")
 async def root():
-    return {"message": "Student Registration API", "status": "healthy"}
+    return {"message": "TAISM Student Registration API", "status": "healthy"}
 
 @api_router.get("/health")
 async def health_check():
@@ -593,7 +455,6 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Load CSV data on startup"""
     await load_csv_to_mongodb()
 
 @app.on_event("shutdown")
