@@ -5,7 +5,7 @@ A full-stack web application for student registration and payment processing.
 ## Tech Stack
 - **Frontend**: React, Tailwind CSS, Framer Motion
 - **Backend**: FastAPI (Python)
-- **Database**: MongoDB Atlas
+- **Database**: Supabase (PostgreSQL)
 - **Payments**: Stripe
 
 ---
@@ -15,7 +15,7 @@ A full-stack web application for student registration and payment processing.
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- MongoDB Atlas account (or local MongoDB)
+- Supabase account
 - Stripe account
 
 ---
@@ -29,7 +29,65 @@ code .
 
 ---
 
-### Step 2: Setup Backend
+### Step 2: Setup Supabase Database
+
+1. Go to [Supabase Dashboard](https://supabase.com/dashboard)
+2. Create a new project or select existing
+3. Go to **SQL Editor** and run this SQL:
+
+```sql
+-- Students table
+CREATE TABLE students (
+  id SERIAL PRIMARY KEY,
+  student_id VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  age INTEGER,
+  email VARCHAR(255) NOT NULL,
+  department VARCHAR(255),
+  gpa DECIMAL(3,2),
+  graduation_year INTEGER,
+  tshirt_size VARCHAR(10),
+  extra_tshirts INTEGER DEFAULT 0,
+  extra_tshirt_size VARCHAR(10),
+  payment_id VARCHAR(100),
+  payment_status VARCHAR(50),
+  registered_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Payment transactions table
+CREATE TABLE payment_transactions (
+  id SERIAL PRIMARY KEY,
+  transaction_id VARCHAR(100) UNIQUE NOT NULL,
+  student_id VARCHAR(50) NOT NULL,
+  email VARCHAR(255),
+  amount DECIMAL(10,2),
+  extra_tshirts INTEGER DEFAULT 0,
+  extra_tshirt_amount DECIMAL(10,2) DEFAULT 0,
+  currency VARCHAR(10) DEFAULT 'usd',
+  session_id VARCHAR(255),
+  payment_id VARCHAR(100),
+  payment_status VARCHAR(50) DEFAULT 'pending',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP
+);
+
+-- Enable Row Level Security
+ALTER TABLE students ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_transactions ENABLE ROW LEVEL SECURITY;
+
+-- Allow public access
+CREATE POLICY "Allow all access to students" ON students FOR ALL USING (true);
+CREATE POLICY "Allow all access to payment_transactions" ON payment_transactions FOR ALL USING (true);
+```
+
+4. Get your credentials from **Project Settings → API**:
+   - Project URL (e.g., `https://xxxxx.supabase.co`)
+   - anon public key (starts with `eyJ...`)
+
+---
+
+### Step 3: Setup Backend
 
 1. **Open terminal in VS Code** (Ctrl + `)
 
@@ -54,9 +112,9 @@ pip install -r requirements.txt
 
 6. **Create `.env` file** in `/backend/` folder:
 ```env
-MONGO_URL="mongodb+srv://<username>:<password>@<cluster>.mongodb.net/?retryWrites=true&w=majority"
-DB_NAME="taism_registration"
-CORS_ORIGINS="*"
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your_anon_key_here
+CORS_ORIGINS=*
 STRIPE_API_KEY=sk_test_your_stripe_secret_key
 ```
 
@@ -71,7 +129,7 @@ uvicorn server:app --reload --port 8001
 
 ---
 
-### Step 3: Verify MongoDB Connection
+### Step 4: Verify Supabase Connection
 
 After starting backend, check the terminal. You should see:
 ```
@@ -79,11 +137,11 @@ INFO - Loaded 200 students from CSV
 INFO - Application startup complete.
 ```
 
-**To verify MongoDB Atlas**:
-1. Go to [MongoDB Atlas](https://cloud.mongodb.com)
-2. Click your cluster → **Browse Collections**
-3. Select database `taism_registration`
-4. You should see `students` and `payment_transactions` collections
+**To verify in Supabase Dashboard**:
+1. Go to [Supabase Dashboard](https://supabase.com/dashboard)
+2. Select your project → **Table Editor**
+3. Click on `students` table
+4. You should see 200 rows of student data
 
 **Test API in browser**:
 - Open: `http://localhost:8001/api/health`
@@ -91,11 +149,11 @@ INFO - Application startup complete.
 
 **Test admin stats**:
 - Open: `http://localhost:8001/api/admin/stats`
-- Should return student count
+- Should return: `{"total_students": 200, ...}`
 
 ---
 
-### Step 4: Setup Frontend
+### Step 5: Setup Frontend
 
 1. **Open new terminal** in VS Code
 
@@ -160,7 +218,6 @@ project/
 | Student ID | Email |
 |------------|-------|
 | 3336 | sean43@hotmail.com |
-| 8774 | vbecker@harvey.com |
 
 ---
 
@@ -189,10 +246,10 @@ project/
 
 ## 🔧 Troubleshooting
 
-### MongoDB Connection Issues
-1. Check if IP is whitelisted in MongoDB Atlas (Network Access → Add IP → Allow from Anywhere)
-2. Verify username/password in connection string
-3. Password special characters must be URL-encoded (@ = %40)
+### Supabase Connection Issues
+1. Verify SUPABASE_URL and SUPABASE_KEY in .env
+2. Check if tables were created in Supabase
+3. Ensure RLS policies allow access
 
 ### Backend Not Starting
 ```bash
@@ -206,12 +263,3 @@ kill -9 <PID>
 ### Frontend API Errors
 - Ensure REACT_APP_BACKEND_URL matches backend URL
 - Check CORS_ORIGINS in backend .env
-
----
-
-## 📧 Support
-
-For issues, check:
-1. Terminal logs for errors
-2. Browser console (F12 → Console)
-3. MongoDB Atlas logs

@@ -2,10 +2,9 @@ from fastapi import FastAPI, APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+from supabase import create_client, Client
 import os
 import logging
-import certifi
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
@@ -24,10 +23,10 @@ from emergentintegrations.payments.stripe.checkout import (
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection with SSL certificate
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url, tlsCAFile=certifi.where())
-db = client[os.environ['DB_NAME']]
+# Supabase connection
+SUPABASE_URL = os.environ['SUPABASE_URL']
+SUPABASE_KEY = os.environ['SUPABASE_KEY']
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Stripe Configuration
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY')
@@ -81,21 +80,6 @@ class UpdateTshirtRequest(BaseModel):
     extra_tshirts: Optional[int] = 0
     extra_tshirt_size: Optional[str] = None
 
-class PaymentTransaction(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    transaction_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    student_id: str
-    email: str
-    amount: float
-    extra_tshirts: int = 0
-    extra_tshirt_amount: float = 0.0
-    currency: str = "usd"
-    session_id: str
-    payment_id: Optional[str] = None
-    payment_status: str = "pending"
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: Optional[str] = None
-
 class CreateCheckoutRequest(BaseModel):
     student_id: str
     origin_url: str
@@ -108,8 +92,8 @@ class AdminStats(BaseModel):
 
 # ============ UTILITY FUNCTIONS ============
 
-async def load_csv_to_mongodb():
-    """Load CSV data into MongoDB on startup"""
+def load_csv_to_supabase():
+    """Load CSV data into Supabase on startup"""
     csv_path = ROOT_DIR / 'students.csv'
     if not csv_path.exists():
         logger.warning("students.csv not found, skipping data load")
@@ -119,27 +103,23 @@ async def load_csv_to_mongodb():
         df = pd.read_csv(csv_path)
         
         for _, row in df.iterrows():
-            student_data = {
-                "student_id": str(row['StudentID']),
-                "name": row['Name'],
-                "age": int(row['Age']),
-                "email": row['Email'],
-                "department": row['Department'],
-                "gpa": float(row['GPA']),
-                "graduation_year": int(row['GraduationYear']),
-                "tshirt_size": None,
-                "extra_tshirts": 0,
-                "extra_tshirt_size": None,
-                "payment_id": None,
-                "payment_status": None,
-                "registered_at": None
-            }
+            student_id = str(row['StudentID'])
             
-            await db.students.update_one(
-                {"student_id": student_data["student_id"]},
-                {"$setOnInsert": student_data},
-                upsert=True
-            )
+            # Check if student already exists
+            existing = supabase.table('students').select('student_id').eq('student_id', student_id).execute()
+            
+            if not existing.data:
+                student_data = {
+                    "student_id": student_id,
+                    "name": row['Name'],
+                    "age": int(row['Age']),
+                    "email": row['Email'],
+                    "department": row['Department'],
+                    "gpa": float(row['GPA']),
+                    "graduation_year": int(row['GraduationYear']),
+                    "extra_tshirts": 0
+                }
+                supabase.table('students').insert(student_data).execute()
         
         logger.info(f"Loaded {len(df)} students from CSV")
     except Exception as e:
@@ -150,14 +130,12 @@ async def load_csv_to_mongodb():
 @api_router.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
     """Validate student credentials"""
-    student = await db.students.find_one(
-        {"student_id": request.student_id, "email": request.email},
-        {"_id": 0}
-    )
+    result = supabase.table('students').select('*').eq('student_id', request.student_id).eq('email', request.email).execute()
     
-    if not student:
+    if not result.data:
         raise HTTPException(status_code=401, detail="Invalid Student ID or Email")
     
+    student = result.data[0]
     token = f"{student['student_id']}:{datetime.now(timezone.utc).isoformat()}"
     
     return LoginResponse(
@@ -169,18 +147,15 @@ async def login(request: LoginRequest):
 
 # ============ STUDENT ENDPOINTS ============
 
-@api_router.get("/student/{student_id}", response_model=Student)
+@api_router.get("/student/{student_id}")
 async def get_student(student_id: str):
     """Get student details by ID"""
-    student = await db.students.find_one(
-        {"student_id": student_id},
-        {"_id": 0}
-    )
+    result = supabase.table('students').select('*').eq('student_id', student_id).execute()
     
-    if not student:
+    if not result.data:
         raise HTTPException(status_code=404, detail="Student not found")
     
-    return Student(**student)
+    return result.data[0]
 
 @api_router.get("/pricing")
 async def get_pricing():
@@ -210,12 +185,9 @@ async def update_tshirt_size(request: UpdateTshirtRequest):
         "extra_tshirt_size": request.extra_tshirt_size if request.extra_tshirts else None
     }
     
-    result = await db.students.update_one(
-        {"student_id": request.student_id},
-        {"$set": update_data}
-    )
+    result = supabase.table('students').update(update_data).eq('student_id', request.student_id).execute()
     
-    if result.matched_count == 0:
+    if not result.data:
         raise HTTPException(status_code=404, detail="Student not found")
     
     return {"success": True, "message": "T-shirt preferences updated"}
@@ -225,13 +197,12 @@ async def update_tshirt_size(request: UpdateTshirtRequest):
 @api_router.post("/payment/create-checkout")
 async def create_checkout_session(request: CreateCheckoutRequest, http_request: Request):
     """Create Stripe checkout session"""
-    student = await db.students.find_one(
-        {"student_id": request.student_id},
-        {"_id": 0}
-    )
+    result = supabase.table('students').select('*').eq('student_id', request.student_id).execute()
     
-    if not student:
+    if not result.data:
         raise HTTPException(status_code=404, detail="Student not found")
+    
+    student = result.data[0]
     
     if not student.get('tshirt_size'):
         raise HTTPException(status_code=400, detail="Please select T-shirt size first")
@@ -240,7 +211,7 @@ async def create_checkout_session(request: CreateCheckoutRequest, http_request: 
         raise HTTPException(status_code=400, detail="Registration already completed")
     
     # Calculate total
-    extra_tshirts = student.get('extra_tshirts', 0)
+    extra_tshirts = student.get('extra_tshirts', 0) or 0
     extra_tshirt_amount = extra_tshirts * EXTRA_TSHIRT_PRICE
     total_amount = REGISTRATION_FEE + extra_tshirt_amount
     
@@ -270,17 +241,19 @@ async def create_checkout_session(request: CreateCheckoutRequest, http_request: 
     session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(checkout_request)
     
     # Create transaction record
-    transaction = PaymentTransaction(
-        student_id=request.student_id,
-        email=student['email'],
-        amount=total_amount,
-        extra_tshirts=extra_tshirts,
-        extra_tshirt_amount=extra_tshirt_amount,
-        session_id=session.session_id,
-        payment_status="pending"
-    )
+    transaction_data = {
+        "transaction_id": str(uuid.uuid4()),
+        "student_id": request.student_id,
+        "email": student['email'],
+        "amount": total_amount,
+        "extra_tshirts": extra_tshirts,
+        "extra_tshirt_amount": extra_tshirt_amount,
+        "currency": "usd",
+        "session_id": session.session_id,
+        "payment_status": "pending"
+    }
     
-    await db.payment_transactions.insert_one(transaction.model_dump())
+    supabase.table('payment_transactions').insert(transaction_data).execute()
     
     return {
         "checkout_url": session.url,
@@ -291,13 +264,12 @@ async def create_checkout_session(request: CreateCheckoutRequest, http_request: 
 @api_router.get("/payment/status/{session_id}")
 async def get_payment_status(session_id: str, http_request: Request):
     """Get payment status"""
-    transaction = await db.payment_transactions.find_one(
-        {"session_id": session_id},
-        {"_id": 0}
-    )
+    result = supabase.table('payment_transactions').select('*').eq('session_id', session_id).execute()
     
-    if not transaction:
+    if not result.data:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    transaction = result.data[0]
     
     if transaction.get('payment_status') == 'paid':
         return {
@@ -317,15 +289,19 @@ async def get_payment_status(session_id: str, http_request: Request):
         payment_id = f"PAY-{uuid.uuid4().hex[:12].upper()}"
         now = datetime.now(timezone.utc).isoformat()
         
-        await db.payment_transactions.update_one(
-            {"session_id": session_id},
-            {"$set": {"payment_status": "paid", "payment_id": payment_id, "updated_at": now}}
-        )
+        # Update transaction
+        supabase.table('payment_transactions').update({
+            "payment_status": "paid",
+            "payment_id": payment_id,
+            "updated_at": now
+        }).eq('session_id', session_id).execute()
         
-        await db.students.update_one(
-            {"student_id": transaction['student_id']},
-            {"$set": {"payment_status": "paid", "payment_id": payment_id, "registered_at": now}}
-        )
+        # Update student
+        supabase.table('students').update({
+            "payment_status": "paid",
+            "payment_id": payment_id,
+            "registered_at": now
+        }).eq('student_id', transaction['student_id']).execute()
         
         return {"status": "complete", "payment_status": "paid", "payment_id": payment_id}
     elif checkout_status.status == 'expired':
@@ -351,17 +327,23 @@ async def stripe_webhook(request: Request):
             payment_id = f"PAY-{uuid.uuid4().hex[:12].upper()}"
             now = datetime.now(timezone.utc).isoformat()
             
-            transaction = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+            # Get transaction
+            result = supabase.table('payment_transactions').select('*').eq('session_id', session_id).execute()
             
-            if transaction and transaction.get('payment_status') != 'paid':
-                await db.payment_transactions.update_one(
-                    {"session_id": session_id},
-                    {"$set": {"payment_status": "paid", "payment_id": payment_id, "updated_at": now}}
-                )
-                await db.students.update_one(
-                    {"student_id": transaction['student_id']},
-                    {"$set": {"payment_status": "paid", "payment_id": payment_id, "registered_at": now}}
-                )
+            if result.data and result.data[0].get('payment_status') != 'paid':
+                transaction = result.data[0]
+                
+                supabase.table('payment_transactions').update({
+                    "payment_status": "paid",
+                    "payment_id": payment_id,
+                    "updated_at": now
+                }).eq('session_id', session_id).execute()
+                
+                supabase.table('students').update({
+                    "payment_status": "paid",
+                    "payment_id": payment_id,
+                    "registered_at": now
+                }).eq('student_id', transaction['student_id']).execute()
         
         return {"status": "success"}
     except Exception as e:
@@ -373,15 +355,16 @@ async def stripe_webhook(request: Request):
 @api_router.get("/admin/stats", response_model=AdminStats)
 async def get_admin_stats():
     """Get registration statistics"""
-    total = await db.students.count_documents({})
-    completed = await db.students.count_documents({"payment_status": "paid"})
+    all_students = supabase.table('students').select('student_id').execute()
+    total = len(all_students.data) if all_students.data else 0
+    
+    paid_students = supabase.table('students').select('student_id').eq('payment_status', 'paid').execute()
+    completed = len(paid_students.data) if paid_students.data else 0
+    
     pending = total - completed
     
-    paid_transactions = await db.payment_transactions.find(
-        {"payment_status": "paid"}, {"_id": 0, "amount": 1}
-    ).to_list(1000)
-    
-    total_revenue = sum(t.get('amount', 0) for t in paid_transactions)
+    paid_transactions = supabase.table('payment_transactions').select('amount').eq('payment_status', 'paid').execute()
+    total_revenue = sum(t.get('amount', 0) for t in paid_transactions.data) if paid_transactions.data else 0
     
     return AdminStats(
         total_students=total,
@@ -393,18 +376,24 @@ async def get_admin_stats():
 @api_router.get("/admin/students")
 async def get_all_students():
     """Get all students"""
-    students = await db.students.find({}, {"_id": 0}).to_list(1000)
-    return students
+    result = supabase.table('students').select('*').execute()
+    return result.data if result.data else []
 
 @api_router.get("/admin/export")
 async def export_csv():
     """Export student data as CSV"""
-    students = await db.students.find({}, {"_id": 0}).to_list(1000)
+    result = supabase.table('students').select('*').execute()
     
-    if not students:
+    if not result.data:
         raise HTTPException(status_code=404, detail="No data found")
     
-    df = pd.DataFrame(students)
+    df = pd.DataFrame(result.data)
+    
+    # Remove internal columns
+    columns_to_keep = ['student_id', 'name', 'age', 'email', 'department', 'gpa', 
+                       'graduation_year', 'tshirt_size', 'extra_tshirts', 'extra_tshirt_size',
+                       'payment_id', 'payment_status', 'registered_at']
+    df = df[[c for c in columns_to_keep if c in df.columns]]
     
     column_mapping = {
         'student_id': 'StudentID',
@@ -435,7 +424,7 @@ async def export_csv():
 
 @api_router.get("/")
 async def root():
-    return {"message": "TAISM Student Registration API", "status": "healthy"}
+    return {"message": "TAISM Student Registration API", "status": "healthy", "database": "Supabase"}
 
 @api_router.get("/health")
 async def health_check():
@@ -455,8 +444,4 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    await load_csv_to_mongodb()
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+    load_csv_to_supabase()
